@@ -8,9 +8,9 @@ const cookieParser = require("cookie-parser");
 const path = require("path");
 const jwt = require("jsonwebtoken");
 
+dotenv.config();
 const connectDB = require("./config/db");
 
-dotenv.config();
 const app = express();
 
 /* -------------------------------------------------- */
