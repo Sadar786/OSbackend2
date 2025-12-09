@@ -1,14 +1,6 @@
-const serverless = require("serverless-http");
+// api/index.js
+// Just use the Express app directly – no serverless-http needed.
 const app = require("../server");
 
-const handler = serverless(app);
-
-// Vercel Node.js runtime expects a default export
-module.exports = async (req, res) => {
-  return handler(req, res);
-};
-
-// ALSO export as default for safety
-exports.default = async (req, res) => {
-  return handler(req, res);
-};
+// Vercel's Node runtime will use this function as the handler.
+module.exports = app;
