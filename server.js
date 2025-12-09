@@ -126,6 +126,5 @@ connectDB()
   .then(() => console.log("✅ MongoDB connected"))
   .catch((err) => console.error("❌ MongoDB Error:", err));
 
-app.listen(PORT, () =>
-  console.log(`🚀 Ocean Stella API running on http://localhost:${PORT}`)
-);
+module.exports = app;
+
