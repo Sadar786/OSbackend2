@@ -1,4 +1,4 @@
-// server/server.js
+// server.js
 const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
@@ -25,36 +25,34 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 /* -------------------------------------------------- */
 app.use(
   helmet({
-    crossOriginOpenerPolicy: false,     // 🔥 REQUIRED for Firebase popup
+    crossOriginOpenerPolicy: false,     // REQUIRED for Firebase popup
     crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: false,   // 🔥 REQUIRED for cookies
+    crossOriginResourcePolicy: false,   // REQUIRED for cookies
   })
 );
 
-// Double-ensure COOP is removed
+// Remove COOP header manually to avoid cookie issues
 app.use((req, res, next) => {
   res.removeHeader("Cross-Origin-Opener-Policy");
   next();
 });
 
 /* -------------------------------------------------- */
-/* 3. CORS CONFIG (MOST IMPORTANT PART)                */
+/* 3. CORS CONFIG                                      */
 /* -------------------------------------------------- */
 const ALLOWED_ORIGINS = [
-  "https://oceanstella.vercel.app",  // Production frontend
-  "http://localhost:5173",           // Local dev
+  "https://oceanstella.vercel.app",   // your frontend
+  "http://localhost:5173",
 ];
 
 app.use(
   cors({
     origin(origin, callback) {
-      // Allow requests without origin (curl, mobile apps)
-      if (!origin) return callback(null, true);
+      if (!origin) return callback(null, true); // allow serverless/internal calls
 
-      // Directly allowed
       if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
 
-      // Allow Vercel preview URLs (*.vercel.app)
+      // Allow Vercel preview deployments: *.vercel.app
       try {
         const { hostname } = new URL(origin);
         if (hostname.endsWith(".vercel.app")) return callback(null, true);
@@ -62,13 +60,12 @@ app.use(
 
       return callback(new Error("CORS blocked: " + origin));
     },
-    credentials: true,  // 🔥 REQUIRED for cookies to work
+    credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   })
 );
 
-// Preflight
 app.options("*", cors());
 
 /* -------------------------------------------------- */
@@ -98,14 +95,26 @@ app.use((req, _res, next) => {
       email: payload.email,
     };
   } catch {
-    // ignore invalid token
+    // ignore invalid tokens
   }
 
   next();
 });
 
 /* -------------------------------------------------- */
-/* 7. ROUTES                                           */
+/* 7. LAZY MONGODB CONNECTION (IMPORTANT FOR VERCEL)   */
+/* -------------------------------------------------- */
+app.use(async (req, res, next) => {
+  try {
+    await connectDB(); // connects only once, cached afterwards
+  } catch (err) {
+    console.error("❌ MongoDB connection error:", err);
+  }
+  next();
+});
+
+/* -------------------------------------------------- */
+/* 8. ROUTES                                           */
 /* -------------------------------------------------- */
 app.use("/api/v1/auth", require("./routes/auth"));
 app.use("/api/v1/categories", require("./routes/categories"));
@@ -118,13 +127,6 @@ app.use("/api/users", require("./routes/user"));
 app.use("/api/upload", require("./routes/upload.routes"));
 
 /* -------------------------------------------------- */
-/* 8. START SERVER                                     */
+/* 9. EXPORT APP (IMPORTANT: NO app.listen() ON VERCEL)*/
 /* -------------------------------------------------- */
-const PORT = process.env.PORT || 8080;
-
-connectDB()
-  .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.error("❌ MongoDB Error:", err));
-
 module.exports = app;
-
