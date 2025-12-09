@@ -75,11 +75,17 @@ app.use(morgan("dev"));
 /* -------------------------------------------------- */
 /* 5. HEALTH CHECK (NO DB CONNECTION)                 */
 /* -------------------------------------------------- */
-app.get("/health", (req, res) => {
+const healthHandler = (req, res) => {
   res.json({ ok: true, time: Date.now() });
-});
+};
 
-/* -------------------------------------------------- */
+// local (optional)
+app.get("/health", healthHandler);
+// Vercel / frontend
+app.get("/api/health", healthHandler);
+
+
+* -------------------------------------------------- */
 /* 6. ATTACH USER FROM ACCESS TOKEN                   */
 /* -------------------------------------------------- */
 app.use((req, _, next) => {
@@ -110,24 +116,20 @@ const dbConnectMiddleware = async (req, res, next) => {
   next();
 };
 
-
 /* -------------------------------------------------- */
-/* 7. ROUTES (VERCEL-COMPATIBLE PATHS)                */
+/* 8. ROUTES (ALL WITH /api PREFIX)                   */
 /* -------------------------------------------------- */
 
-app.use("/v1/auth", dbConnectMiddleware, require("./routes/auth"));
-app.use("/v1/categories", dbConnectMiddleware, require("./routes/categories"));
-app.use("/v1/products", dbConnectMiddleware, require("./routes/products"));
-app.use("/v1/blog", dbConnectMiddleware, require("./routes/blog"));
-app.use("/v1/inquiries", dbConnectMiddleware, require("./routes/inquiries"));
-app.use("/v1/leads", dbConnectMiddleware, require("./routes/leads"));
-app.use("/v1/case-studies", dbConnectMiddleware, require("./routes/caseStudies"));
+app.use("/api/v1/auth", dbConnectMiddleware, require("./routes/auth"));
+app.use("/api/v1/categories", dbConnectMiddleware, require("./routes/categories"));
+app.use("/api/v1/products", dbConnectMiddleware, require("./routes/products"));
+app.use("/api/v1/blog", dbConnectMiddleware, require("./routes/blog"));
+app.use("/api/v1/inquiries", dbConnectMiddleware, require("./routes/inquiries"));
+app.use("/api/v1/leads", dbConnectMiddleware, require("./routes/leads"));
+app.use("/api/v1/case-studies", dbConnectMiddleware, require("./routes/caseStudies"));
 
-// THESE TWO MUST NOT HAVE /v1
-app.use("/users", dbConnectMiddleware, require("./routes/user"));
-app.use("/upload", dbConnectMiddleware, require("./routes/upload.routes"));
-
-
+app.use("/api/users", dbConnectMiddleware, require("./routes/user"));
+app.use("/api/upload", dbConnectMiddleware, require("./routes/upload.routes"));
 
 /* -------------------------------------------------- */
 /* 9. EXPORT EXPRESS APP FOR VERCEL                   */
