@@ -1,25 +1,42 @@
 // server/config/db.js
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-let cached = global._mongooseConn;
+if (process.env.MONGODB_URI) {
+  console.log("🔑 MONGODB_URI found in environment variables");
+} else {
+  throw new Error("❌ Missing MONGODB_URI in environment variables");
+}
+
+let cached = global.mongoose;
+
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
 
 async function connectDB() {
-  if (cached) return cached;
+  // If already connected → return the connection
+  if (cached.conn) return cached.conn;
 
-  const uri = process.env.MONGODB_URI;
-  if (!uri) throw new Error('MONGODB_URI is missing');
+  // If already connecting → wait for the promise
+  if (!cached.promise) {
+    cached.promise = mongoose
+      .connect(process.env.MONGODB_URI, {
+        maxPoolSize: 5,
+        serverSelectionTimeoutMS: 5000,
+      })
+      .then((mongoose) => {
+        console.log("✅ MongoDB connected");
+        return mongoose;
+      })
+      .catch((err) => {
+        console.error("❌ MongoDB connection error:", err);
+        cached.promise = null; // Reset to retry later
+        throw err;
+      });
+  }
 
-  mongoose.set('strictQuery', true);
-
-  const conn = await mongoose.connect(uri, {
-    serverSelectionTimeoutMS: 2500,   // <= keep small
-    socketTimeoutMS: 45000,
-    maxPoolSize: 5,
-  });
-
-  global._mongooseConn = conn;
-  console.log('✅ MongoDB connected');
-  return conn;
+  cached.conn = await cached.promise;
+  return cached.conn;
 }
 
 module.exports = connectDB;

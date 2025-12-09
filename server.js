@@ -103,26 +103,31 @@ app.use((req, _, next) => {
 /* -------------------------------------------------- */
 const dbConnectMiddleware = async (req, res, next) => {
   try {
-    await connectDB(); // connects once, reuses cached connection
+    await connectDB();
   } catch (err) {
     console.error("❌ Database connection error:", err);
   }
   next();
 };
 
-/* -------------------------------------------------- */
-/* 8. ROUTES (ALL USING LAZY DB CONNECT)              */
-/* -------------------------------------------------- */
-app.use("/api/v1/auth", dbConnectMiddleware, require("./routes/auth"));
-app.use("/api/v1/categories", dbConnectMiddleware, require("./routes/categories"));
-app.use("/api/v1/products", dbConnectMiddleware, require("./routes/products"));
-app.use("/api/v1/blog", dbConnectMiddleware, require("./routes/blog"));
-app.use("/api/v1/inquiries", dbConnectMiddleware, require("./routes/inquiries"));
-app.use("/api/v1/leads", dbConnectMiddleware, require("./routes/leads"));
-app.use("/api/v1/case-studies", dbConnectMiddleware, require("./routes/caseStudies"));
 
-app.use("/api/users", dbConnectMiddleware, require("./routes/user"));
-app.use("/api/upload", dbConnectMiddleware, require("./routes/upload.routes"));
+/* -------------------------------------------------- */
+/* 7. ROUTES (VERCEL-COMPATIBLE PATHS)                */
+/* -------------------------------------------------- */
+
+app.use("/v1/auth", dbConnectMiddleware, require("./routes/auth"));
+app.use("/v1/categories", dbConnectMiddleware, require("./routes/categories"));
+app.use("/v1/products", dbConnectMiddleware, require("./routes/products"));
+app.use("/v1/blog", dbConnectMiddleware, require("./routes/blog"));
+app.use("/v1/inquiries", dbConnectMiddleware, require("./routes/inquiries"));
+app.use("/v1/leads", dbConnectMiddleware, require("./routes/leads"));
+app.use("/v1/case-studies", dbConnectMiddleware, require("./routes/caseStudies"));
+
+// THESE TWO MUST NOT HAVE /v1
+app.use("/users", dbConnectMiddleware, require("./routes/user"));
+app.use("/upload", dbConnectMiddleware, require("./routes/upload.routes"));
+
+
 
 /* -------------------------------------------------- */
 /* 9. EXPORT EXPRESS APP FOR VERCEL                   */
