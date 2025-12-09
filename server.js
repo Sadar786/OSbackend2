@@ -85,7 +85,7 @@ app.get("/health", healthHandler);
 app.get("/api/health", healthHandler);
 
 
-* -------------------------------------------------- */
+/* -------------------------------------------------- */
 /* 6. ATTACH USER FROM ACCESS TOKEN                   */
 /* -------------------------------------------------- */
 app.use((req, _, next) => {
