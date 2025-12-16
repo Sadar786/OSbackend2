@@ -41,9 +41,12 @@ app.use((_, res, next) => {
 /* 3. CORS CONFIG                                     */
 /* -------------------------------------------------- */
 const ALLOWED_ORIGINS = [
+  "https://oceanstella.com",
+  "https://www.oceanstella.com",
   "https://oceanstella.vercel.app",
   "http://localhost:5173",
 ];
+
 
 app.use(
   cors({
