@@ -7,6 +7,10 @@ const { admin } = require("../firebaseAdmin"); // must export { admin }
 const User = require("../modules/User");
 const AuthSession = require("../modules/AuthSession");
 
+// ✅ NEW: OTP + mailer helpers
+const { genOtp6, hashOtp } = require("../utils/otp");
+const { sendOtpEmail } = require("../utils/mailer");
+
 const router = express.Router();
 
 /* -------------------- token + cookie helpers -------------------- */
@@ -118,9 +122,78 @@ router.post(
         passwordHash,
         role,
         status: "active",
+        emailVerified: false, // ✅ NEW
       });
 
-      // create refresh session (10 days by default)
+      // ✅ NEW: send OTP, DO NOT login yet
+      const otp = genOtp6();
+      user.emailOtpHash = hashOtp(otp);
+      user.emailOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+      user.emailOtpLastSentAt = new Date();
+      user.emailOtpAttempts = 0;
+      await user.save();
+
+      await sendOtpEmail(user.email, otp);
+
+      return res.status(201).json({
+        ok: true,
+        needsVerification: true,
+        email: user.email,
+      });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+/* ==================== POST /auth/verify-email ==================== */
+router.post(
+  "/verify-email",
+  body("email").isEmail().normalizeEmail(),
+  body("code").trim().isLength({ min: 6, max: 6 }),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+      const { email, code } = req.body;
+
+      const user = await User.findOne({ email: email.toLowerCase() });
+      if (!user) return res.status(404).json({ ok: false, error: "User not found" });
+
+      if (user.emailVerified) {
+        // if already verified, just allow signin normally (we won’t auto-login here)
+        return res.json({ ok: true, alreadyVerified: true });
+      }
+
+      if (!user.emailOtpHash || !user.emailOtpExpiresAt) {
+        return res.status(400).json({ ok: false, error: "No OTP requested" });
+      }
+
+      if (user.emailOtpExpiresAt.getTime() < Date.now()) {
+        return res.status(400).json({ ok: false, error: "OTP expired" });
+      }
+
+      if ((user.emailOtpAttempts || 0) >= 8) {
+        return res.status(429).json({ ok: false, error: "Too many attempts. Resend code." });
+      }
+
+      const ok = hashOtp(code) === user.emailOtpHash;
+      user.emailOtpAttempts = (user.emailOtpAttempts || 0) + 1;
+
+      if (!ok) {
+        await user.save();
+        return res.status(400).json({ ok: false, error: "Invalid code" });
+      }
+
+      // ✅ verified
+      user.emailVerified = true;
+      user.emailOtpHash = null;
+      user.emailOtpExpiresAt = null;
+      user.emailOtpAttempts = 0;
+      await user.save();
+
+      // ✅ NOW create refresh session + cookies (same as signin)
       const refreshToken = crypto.randomBytes(64).toString("hex");
       const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
       const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
@@ -136,7 +209,10 @@ router.post(
       const accessToken = signAccessToken(user);
       setAuthCookies(res, { accessToken, refreshToken });
 
-      res.status(201).json({
+      user.lastLoginAt = new Date();
+      await user.save();
+
+      return res.json({
         ok: true,
         user: {
           id: user._id,
@@ -145,10 +221,48 @@ router.post(
           role: user.role,
           status: user.status,
           avatar: user.avatar || null,
+          emailVerified: true,
         },
       });
     } catch (e) {
-      res.status(500).json({ ok: false, error: e.message });
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+/* ==================== POST /auth/resend-email-otp ==================== */
+router.post(
+  "/resend-email-otp",
+  body("email").isEmail().normalizeEmail(),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+      const email = req.body.email.toLowerCase();
+      const user = await User.findOne({ email });
+      if (!user) return res.status(404).json({ ok: false, error: "User not found" });
+
+      if (user.emailVerified) return res.json({ ok: true, alreadyVerified: true });
+
+      // simple cooldown 60s
+      const last = user.emailOtpLastSentAt ? user.emailOtpLastSentAt.getTime() : 0;
+      if (Date.now() - last < 60 * 1000) {
+        return res.status(429).json({ ok: false, error: "Wait 60 seconds before resending" });
+      }
+
+      const otp = genOtp6();
+      user.emailOtpHash = hashOtp(otp);
+      user.emailOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      user.emailOtpLastSentAt = new Date();
+      user.emailOtpAttempts = 0;
+      await user.save();
+
+      await sendOtpEmail(user.email, otp);
+
+      return res.json({ ok: true });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: e.message });
     }
   }
 );
@@ -167,6 +281,16 @@ router.post(
 
       const user = await User.findOne({ email: email.toLowerCase(), status: "active" });
       if (!user) return res.status(401).json({ ok: false, error: "Invalid credentials" });
+
+      // ✅ NEW: block signin until verified
+      if (!user.emailVerified) {
+        return res.status(403).json({
+          ok: false,
+          error: "Please verify your email first",
+          needsVerification: true,
+          email: user.email,
+        });
+      }
 
       const ok = await bcrypt.compare(password, user.passwordHash);
       if (!ok) return res.status(401).json({ ok: false, error: "Invalid credentials" });
@@ -199,6 +323,7 @@ router.post(
           role: user.role,
           status: user.status,
           avatar: user.avatar || null,
+          emailVerified: !!user.emailVerified,
         },
       });
     } catch (e) {
@@ -226,6 +351,12 @@ router.post("/refresh", async (req, res) => {
     const user = await User.findById(session.userId);
     if (!user || user.status !== "active") {
       return res.status(401).json({ ok: false, error: "User disabled" });
+    }
+
+    // ✅ optional safety: block refresh if not verified
+    if (!user.emailVerified) {
+      clearAuthCookies(res);
+      return res.status(403).json({ ok: false, error: "Verify your email first" });
     }
 
     // Issue new access token
@@ -261,7 +392,7 @@ router.get("/me", async (req, res) => {
     const payload = jwt.verify(at, process.env.JWT_ACCESS_SECRET);
 
     const user = await User.findById(payload.sub).select(
-      "name email role status avatar avatarPublicId"
+      "name email role status avatar avatarPublicId emailVerified"
     );
     if (!user) return res.status(401).json({ ok: false, error: "Invalid user" });
 
@@ -315,16 +446,19 @@ router.post("/google", async (req, res) => {
         provider: "google",
         providerId: uid,
         avatar: picture, // store Google photo as initial avatar
+        emailVerified: true, // ✅ Google = verified
       });
     } else {
       const shouldSave =
         user.provider !== "google" ||
         (!user.providerId && uid) ||
-        (picture && user.avatar !== picture);
+        (picture && user.avatar !== picture) ||
+        user.emailVerified !== true;
 
       if (user.provider !== "google") user.provider = "google";
       if (!user.providerId && uid) user.providerId = uid;
       if (picture && user.avatar !== picture) user.avatar = picture;
+      if (user.emailVerified !== true) user.emailVerified = true; // ✅ ensure verified
       if (shouldSave) await user.save();
     }
 
@@ -357,6 +491,7 @@ router.post("/google", async (req, res) => {
         role: user.role,
         status: user.status,
         avatar: user.avatar || null,
+        emailVerified: true,
       },
     });
   } catch (e) {

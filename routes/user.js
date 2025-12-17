@@ -68,6 +68,7 @@ const sanitize = (u) => ({
   _id: u._id,
   name: u.name,
   email: u.email,
+  emailVerified: !!u.emailVerified,   // ✅ add this
   role: u.role,
   status: u.status,
   avatar: u.avatar || null,
@@ -79,18 +80,18 @@ const sanitize = (u) => ({
 // GET /api/users/admin?limit=&page=&q=&status=&role=
 router.get("/admin", async (req, res) => {
   try {
-    const page  = Math.max(1, parseInt(req.query.page || "1", 10));
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "20", 10)));
-    const q     = (req.query.q || "").trim();
-    const status= (req.query.status || "").trim();
-    const role  = (req.query.role || "").trim();
+    const q = (req.query.q || "").trim();
+    const status = (req.query.status || "").trim();
+    const role = (req.query.role || "").trim();
 
     const filter = {};
     if (status) filter.status = status;
     if (role) filter.role = role;
     if (q) {
       filter.$or = [
-        { name:  new RegExp(q, "i") },
+        { name: new RegExp(q, "i") },
         { email: new RegExp(q, "i") },
       ];
     }
@@ -112,7 +113,7 @@ router.post(
   body("name").isLength({ min: 2 }),
   body("email").isEmail(),
   body("role").optional().isString(),
-  body("status").optional().isIn(["active","disabled"]),
+  body("status").optional().isIn(["active", "disabled"]),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ ok: false, errors: errors.array() });
@@ -150,7 +151,7 @@ router.put(
   "/admin/:id",
   body("email").optional().isEmail(),
   body("role").optional().isString(),
-  body("status").optional().isIn(["active","disabled"]),
+  body("status").optional().isIn(["active", "disabled"]),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ ok: false, errors: errors.array() });
