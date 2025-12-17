@@ -113,14 +113,11 @@ router.post(
       const passwordHash = await bcrypt.hash(password, 10);
 
       // first user becomes superadmin, else editor
-      const count = await User.countDocuments();
-      const role = count === 0 ? "superadmin" : "editor";
 
       const user = await User.create({
         name,
         email: email.toLowerCase(),
         passwordHash,
-        role,
         status: "active",
         emailVerified: false, // ✅ NEW
       });
@@ -135,7 +132,7 @@ router.post(
 
       console.log("DEV OTP for", user.email, "=>", otp);
 
-     // await sendOtpEmail(user.email, otp);
+      await sendOtpEmail(user.email, otp);
 
       return res.status(201).json({
         ok: true,
