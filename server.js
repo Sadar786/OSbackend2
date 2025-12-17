@@ -25,7 +25,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 /* -------------------------------------------------- */
 app.use(
   helmet({
-    crossOriginOpenerPolicy: false,
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: false,
   })
