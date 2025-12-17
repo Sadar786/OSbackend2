@@ -133,7 +133,9 @@ router.post(
       user.emailOtpAttempts = 0;
       await user.save();
 
-      await sendOtpEmail(user.email, otp);
+      console.log("DEV OTP for", user.email, "=>", otp);
+
+     // await sendOtpEmail(user.email, otp);
 
       return res.status(201).json({
         ok: true,
