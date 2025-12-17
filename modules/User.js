@@ -14,7 +14,7 @@ const userSchema = new mongoose.Schema(
     emailOtpLastSentAt: { type: Date, default: null },
     emailOtpAttempts: { type: Number, default: 0 },
 
-    role: { type: String, enum: ["superadmin", "admin", "editor", "viewer"], default: "viewer" },
+    role: { type: String, default: "viewer" },
     status: { type: String, enum: ["active", "disabled"], default: "active" },
 
     // you already have this as a string in Google login:
