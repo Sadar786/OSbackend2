@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema(
     name:   { type: String, required: true, trim: true },
     email:  { type: String, required: true, unique: true, lowercase: true },
     passwordHash: { type: String }, // empty for Google users
-    role:   { type: String, enum: ["superadmin","admin","editor","viewer"], default: "editor" },
+    role:   { type: String, enum: ["superadmin","admin","editor","viewer"], default: "viewer" },
     status: { type: String, enum: ["active","disabled"], default: "active" },
 
     // you already have this as a string in Google login:
