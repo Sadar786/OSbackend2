@@ -11,14 +11,34 @@ const router = express.Router();
 
 /* -------------------- token + cookie helpers -------------------- */
 const isProd = process.env.NODE_ENV === "production";
+
+// Access token short (security)
 const ACCESS_TTL = process.env.ACCESS_TOKEN_TTL || "15m";
-const REFRESH_TTL_MS = (() => {
-  const m = String(process.env.REFRESH_TOKEN_TTL || "30d").match(/^(\d+)([smhd])$/i);
-  const n = m ? parseInt(m[1], 10) : 30;
-  const unit = m ? m[2].toLowerCase() : "d";
-  const mult = unit === "s" ? 1e3 : unit === "m" ? 60e3 : unit === "h" ? 3600e3 : 86400e3;
+
+// Refresh token long (controls “stay logged in”)
+const REFRESH_TTL = process.env.REFRESH_TOKEN_TTL || "10d";
+
+// Parse "15m", "10d", etc. to milliseconds
+function durationToMs(val, fallbackMs) {
+  const m = String(val || "")
+    .trim()
+    .match(/^(\d+)([smhd])$/i);
+  if (!m) return fallbackMs;
+  const n = parseInt(m[1], 10);
+  const unit = m[2].toLowerCase();
+  const mult =
+    unit === "s"
+      ? 1e3
+      : unit === "m"
+      ? 60e3
+      : unit === "h"
+      ? 3600e3
+      : 86400e3; // d
   return n * mult;
-})();
+}
+
+const ACCESS_TTL_MS = durationToMs(ACCESS_TTL, 15 * 60 * 1000);
+const REFRESH_TTL_MS = durationToMs(REFRESH_TTL, 10 * 24 * 60 * 60 * 1000);
 
 function signAccessToken(user) {
   return jwt.sign(
@@ -27,25 +47,35 @@ function signAccessToken(user) {
     { expiresIn: ACCESS_TTL }
   );
 }
-function setAuthCookies(res, { accessToken, refreshToken }) {
+
+function cookieBaseOptions() {
+  // If your frontend & backend are on different domains in PROD, you need:
+  // sameSite: "none" + secure: true
+  return {
+    httpOnly: true,
+    secure: isProd, // in production must be true (https)
+    sameSite: isProd ? "none" : "lax",
+    path: "/",
+  };
+}
+
+function setAuthCookies(res, { accessToken, refreshToken, refreshMaxAgeMs = REFRESH_TTL_MS }) {
   res.cookie("os_at", accessToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "none",
-    path: "/",
-    maxAge: 15 * 60 * 1000,
+    ...cookieBaseOptions(),
+    maxAge: ACCESS_TTL_MS,
   });
+
   res.cookie("os_rt", refreshToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "none",
-    path: "/",
-    maxAge: REFRESH_TTL_MS,
+    ...cookieBaseOptions(),
+    maxAge: refreshMaxAgeMs,
   });
 }
+
 function clearAuthCookies(res) {
-  res.clearCookie("os_at", { path: "/" });
-  res.clearCookie("os_rt", { path: "/" });
+  // Must match cookie options to reliably clear in browsers
+  const opts = cookieBaseOptions();
+  res.clearCookie("os_at", opts);
+  res.clearCookie("os_rt", opts);
 }
 
 /* -------------------- bcrypt or bcryptjs -------------------- */
@@ -90,10 +120,11 @@ router.post(
         status: "active",
       });
 
-      // create refresh session
+      // create refresh session (10 days by default)
       const refreshToken = crypto.randomBytes(64).toString("hex");
       const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
       const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
+
       await AuthSession.create({
         userId: user._id,
         tokenHash,
@@ -133,16 +164,18 @@ router.post(
       if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
       const { email, password } = req.body;
+
       const user = await User.findOne({ email: email.toLowerCase(), status: "active" });
       if (!user) return res.status(401).json({ ok: false, error: "Invalid credentials" });
 
       const ok = await bcrypt.compare(password, user.passwordHash);
       if (!ok) return res.status(401).json({ ok: false, error: "Invalid credentials" });
 
-      // create refresh session
+      // create refresh session (10 days by default)
       const refreshToken = crypto.randomBytes(64).toString("hex");
       const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
       const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
+
       await AuthSession.create({
         userId: user._id,
         tokenHash,
@@ -179,23 +212,40 @@ router.post("/refresh", async (req, res) => {
   try {
     const rt = req.cookies?.os_rt;
     if (!rt) return res.status(401).json({ ok: false, error: "No refresh token" });
+
     const tokenHash = crypto.createHash("sha256").update(rt).digest("hex");
-    const session = await AuthSession.findOne({ tokenHash, revokedAt: { $exists: false } });
+    const session = await AuthSession.findOne({
+      tokenHash,
+      revokedAt: { $exists: false },
+    });
+
     if (!session || session.expiresAt < new Date()) {
       return res.status(401).json({ ok: false, error: "Session expired" });
     }
+
     const user = await User.findById(session.userId);
     if (!user || user.status !== "active") {
       return res.status(401).json({ ok: false, error: "User disabled" });
     }
+
+    // Issue new access token
     const accessToken = signAccessToken(user);
+
+    // Keep refresh cookie aligned with remaining DB session time
+    const remainingMs = Math.max(0, session.expiresAt.getTime() - Date.now());
+
+    // Refresh access token cookie
     res.cookie("os_at", accessToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      path: "/",
-      maxAge: 15 * 60 * 1000,
+      ...cookieBaseOptions(),
+      maxAge: ACCESS_TTL_MS,
     });
+
+    // Re-set os_rt so browser keeps it, but NOT longer than DB session
+    res.cookie("os_rt", rt, {
+      ...cookieBaseOptions(),
+      maxAge: remainingMs,
+    });
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -207,6 +257,7 @@ router.get("/me", async (req, res) => {
   try {
     const at = req.cookies?.os_at;
     if (!at) return res.status(401).json({ ok: false, error: "No token" });
+
     const payload = jwt.verify(at, process.env.JWT_ACCESS_SECRET);
 
     const user = await User.findById(payload.sub).select(
@@ -221,14 +272,17 @@ router.get("/me", async (req, res) => {
 });
 
 /* ==================== POST /auth/signout ==================== */
-router.post("/signout", async (_req, res) => {
+router.post("/signout", async (req, res) => {
   try {
-    const rt = _req.cookies?.os_rt;
+    const rt = req.cookies?.os_rt;
     if (rt) {
       const tokenHash = crypto.createHash("sha256").update(rt).digest("hex");
       await AuthSession.updateOne({ tokenHash }, { $set: { revokedAt: new Date() } });
     }
-  } catch {}
+  } catch {
+    // ignore
+  }
+
   clearAuthCookies(res);
   res.json({ ok: true });
 });
@@ -274,10 +328,11 @@ router.post("/google", async (req, res) => {
       if (shouldSave) await user.save();
     }
 
-    // 3) Create refresh session
+    // 3) Create refresh session (10 days by default)
     const refreshToken = crypto.randomBytes(64).toString("hex");
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
     const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
+
     await AuthSession.create({
       userId: user._id,
       tokenHash,
