@@ -34,10 +34,10 @@ function durationToMs(val, fallbackMs) {
     unit === "s"
       ? 1e3
       : unit === "m"
-      ? 60e3
-      : unit === "h"
-      ? 3600e3
-      : 86400e3; // d
+        ? 60e3
+        : unit === "h"
+          ? 3600e3
+          : 86400e3; // d
   return n * mult;
 }
 
@@ -132,13 +132,26 @@ router.post(
 
       console.log("DEV OTP for", user.email, "=>", otp);
 
-      await sendOtpEmail(user.email, otp);
+      try {
+        await sendOtpEmail(user.email, otp);
+      } catch (err) {
+        console.error("OTP email send failed:", err);
+
+        // rollback user so you don't get stuck with 409 next time
+        await User.deleteOne({ _id: user._id });
+
+        return res.status(500).json({
+          ok: false,
+          error: "Could not send verification email. Please check SMTP settings.",
+        });
+      }
 
       return res.status(201).json({
         ok: true,
         needsVerification: true,
         email: user.email,
       });
+
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
