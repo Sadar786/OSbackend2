@@ -394,22 +394,81 @@ router.post("/refresh", async (req, res) => {
   }
 });
 
-/* ==================== GET /auth/me ==================== */
+/* ==================== GET /auth/me (AUTO-REFRESH) ==================== */
 router.get("/me", async (req, res) => {
   try {
+    const secret = process.env.JWT_ACCESS_SECRET;
+
+    // 1) Try access token first
     const at = req.cookies?.os_at;
-    if (!at) return res.status(401).json({ ok: false, error: "No token" });
+    if (at) {
+      try {
+        const payload = jwt.verify(at, secret);
 
-    const payload = jwt.verify(at, process.env.JWT_ACCESS_SECRET);
+        const user = await User.findById(payload.sub).select(
+          "name email role status avatar avatarPublicId emailVerified"
+        );
 
-    const user = await User.findById(payload.sub).select(
+        if (!user || user.status !== "active") {
+          clearAuthCookies(res);
+          return res.status(401).json({ ok: false, error: "Invalid user" });
+        }
+
+        return res.json({ ok: true, user });
+      } catch {
+        // access token expired/invalid -> fall through to refresh
+      }
+    }
+
+    // 2) Access missing/expired -> try refresh cookie
+    const rt = req.cookies?.os_rt;
+    if (!rt) {
+      return res.status(401).json({ ok: false, error: "No session" });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(rt).digest("hex");
+    const session = await AuthSession.findOne({
+      tokenHash,
+      revokedAt: { $exists: false },
+    });
+
+    if (!session || session.expiresAt < new Date()) {
+      clearAuthCookies(res);
+      return res.status(401).json({ ok: false, error: "Session expired" });
+    }
+
+    const user = await User.findById(session.userId).select(
       "name email role status avatar avatarPublicId emailVerified"
     );
-    if (!user) return res.status(401).json({ ok: false, error: "Invalid user" });
 
-    res.json({ ok: true, user });
+    if (!user || user.status !== "active") {
+      clearAuthCookies(res);
+      return res.status(401).json({ ok: false, error: "User disabled" });
+    }
+
+    // optional: enforce verified email
+    if (!user.emailVerified) {
+      clearAuthCookies(res);
+      return res.status(403).json({ ok: false, error: "Verify your email first" });
+    }
+
+    // 3) Issue new access token + keep refresh cookie aligned with DB session remaining time
+    const accessToken = signAccessToken(user);
+    const remainingMs = Math.max(0, session.expiresAt.getTime() - Date.now());
+
+    res.cookie("os_at", accessToken, {
+      ...cookieBaseOptions(),
+      maxAge: ACCESS_TTL_MS,
+    });
+
+    res.cookie("os_rt", rt, {
+      ...cookieBaseOptions(),
+      maxAge: remainingMs,
+    });
+
+    return res.json({ ok: true, user });
   } catch (e) {
-    res.status(401).json({ ok: false, error: "Unauthorized" });
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 });
 
