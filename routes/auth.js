@@ -112,7 +112,6 @@ router.post(
 
       const passwordHash = await bcrypt.hash(password, 10);
 
-      // first user becomes superadmin, else editor
 
       const user = await User.create({
         name,
