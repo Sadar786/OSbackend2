@@ -511,7 +511,6 @@ router.post("/google", async (req, res) => {
       user = await User.create({
         name: name || "Google User",
         email: normalizedEmail,
-        role,
         status: "active",
         provider: "google",
         providerId: uid,
